@@ -6,6 +6,15 @@
 
 项目包含两件可独立打开的作品：未来生物实验室 **PELAGIC**，以及水墨青绿风格的 **荷塘月色**。模型、纹理、装饰和荷塘环境音由程序生成，无需安装 npm 或执行构建。
 
+## 在线体验
+
+无需下载，点击即可进入展示页：
+
+- [作品入口](https://citystarfine.github.io/html-showcase/)
+- [PELAGIC · 未来生物实验室](https://citystarfine.github.io/html-showcase/projects/pelagic-lab/)
+- [荷塘月色 · 水墨青绿](https://citystarfine.github.io/html-showcase/projects/lotus-pond/)
+
+通过 GitHub Pages 发布，更新 `main` 后网站自动更新。三维场景加载固定版本 CDN 库，声音需要点击按钮后开启。
 ## 作品
 
 ### PELAGIC · 未来生物实验室
