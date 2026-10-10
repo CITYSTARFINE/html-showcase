@@ -1,5 +1,7 @@
 # 荷塘月色 · 水墨青绿重绘
 
+制作工具：**Codex**；使用技能：[html-showcase](../skills/html-showcase/SKILL.md)。该文档对应由该技能指导制作/重绘的最终展示作品。
+
 交付文件为 `index.html`，可直接在浏览器打开，无需构建。three.js 与 addons 使用 importmap 锁定 0.160.0，首次加载需要联网。CSS、业务 JS、模型、纹理与环境音全部内联或程序化生成；字体使用本地楷体/宋体回退。原始文件另存于仓库的 `archive/lotus-pond-v7.html`，未覆盖。
 
 ## 改动说明

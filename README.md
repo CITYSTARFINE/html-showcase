@@ -2,6 +2,8 @@
 
 我的第一个 GitHub 项目：用单文件 HTML 展示实时三维空间与国风水墨场景。
 
+两个展示项目均由 **Codex 使用本仓库的 [html-showcase 技能](skills/html-showcase/SKILL.md) 制作与迭代**。PELAGIC 由 Codex 按选定方向原创构建；荷塘月色由 Codex 基于用户提供的 v7 源码完成水墨重绘、交互完善与验收。`archive/` 保存输入原版，不将其原始制作归因于本次重绘。
+
 项目包含两件可独立打开的作品：未来生物实验室 **PELAGIC**，以及水墨青绿风格的 **荷塘月色**。模型、纹理、装饰和荷塘环境音由程序生成，无需安装 npm 或执行构建。
 
 ## 作品
@@ -53,11 +55,37 @@ html-showcase-project/
 ├── projects/
 │   ├── pelagic-lab/index.html    # 实验室完整单文件代码
 │   └── lotus-pond/index.html     # 荷塘完整单文件代码
+├── skills/html-showcase/        # 可复用 Codex 技能、模板和生成脚本
 ├── docs/                        # 设计、改动与验收文档
 ├── assets/previews/             # 浏览器截图
 └── archive/lotus-pond-v7.html    # 荷塘原始版本备份
 ```
 
+## 使用同一个技能制作新作品
+
+[技能入口](skills/html-showcase/SKILL.md) · [技能工作流](skills/html-showcase/README.md)
+
+技能包含 T1/T2/T3 三个技术等级、七套视觉预设、首次需求的可点击选择、材料来源选择、程序化装饰规则和单文件生成脚本。用户已明确的选择会保留；T3 动工前需要明确确认。
+
+将整个 `skills/html-showcase` 文件夹复制到用户技能目录，保留旁边的模板和脚本。Windows 用户级目录为 `%USERPROFILE%\.agents\skills\html-showcase\`；如果父目录不存在，先创建它。Codex 未显示该技能时重新启动。
+
+在 Codex 中调用示例：
+
+```text
+$html-showcase
+帮我制作一个未来生物实验室展示页，对美术与三维光影要求较高。
+内容采用原创概念，用于作品集；先让我选择视觉方向、技术等级与交互方式。
+```
+
+也可以在希望生成项目的目录运行脚手架：
+
+```bash
+python /path/to/html-showcase/skills/html-showcase/new.py
+```
+
+脚本只生成基础单文件 HTML；最终内容、美术、模型、交互与浏览器验收由 Codex 根据技能和用户选择继续完成。仓库中的两件作品展示的是完成后的定制成果。
+
+修改永久工作流请编辑 `skills/html-showcase/SKILL.md`；修改默认视觉与布局请编辑技能的 `styles/`、`templates/` 与 `js/`；修改当前作品请编辑对应 `projects/*/index.html`。本仓库保存技能快照，更新后需要同步到已安装的技能目录。
 ## 修改
 
 直接编辑对应作品的 `index.html`。实验室的配色在 CSS 变量中，仪器说明与相机路点在脚本的 `data` 和 `points` 中；荷塘的章节在 `SECTIONS` 中，色彩与后期在昼夜插值代码和 `GradeShader` 中。
