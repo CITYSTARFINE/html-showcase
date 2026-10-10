@@ -1,0 +1,12 @@
+# 本地临时文件、缓存与凭据
+.env
+.env.*
+!.env.example
+*.log
+__pycache__/
+node_modules/
+.DS_Store
+Thumbs.db
+edge-*/
+*-edge/
+.tmp/
