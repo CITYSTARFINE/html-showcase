@@ -4,7 +4,7 @@
 
 `new.py` 负责问题、顺序、已知值、授权状态和续填；Codex 负责显示选项与记录用户实际提交，不重复自行提问。视觉方向选项和完整方案确认属于后续设计步骤，仍在对话中进行。
 
-顺序：用途 → 风格（七预设+自定义，三个形容词和一个参考）→ 美术完成度 → 等级 → T3 独立二次确认（仅 T3）→ 内容来源 → 素材方式 → AI 用途与明确授权（仅 AI）→ 验收标准确认。每轮最多三问；确认不能从默认值、预选或“已等待”推断。
+顺序：用途 → 风格（七预设+自定义，三个形容词和一个参考）→ 配色方式与颜色选择 → 美术完成度 → 等级 → T3 独立二次确认（仅 T3）→ 内容来源 → 素材方式 → AI 用途与明确授权（仅 AI）→ 验收标准确认。每轮最多三问；确认不能从默认值、预选或“已等待”推断。
 
 需求表中未含主题/正文/章节，Codex 保留原始任务上下文；只有缺失的必要信息才补问。等级内交互重点从用户需求推导并放入视觉方向方案供选择，不额外重复收集已知要求。
 
@@ -18,6 +18,7 @@
 {
   "purpose": "课堂展示",
   "style": "学术",
+  "palette_mode": "沿用风格预设",
   "tier": "T1",
   "content_source": "我搜索整理"
 }
@@ -32,7 +33,7 @@ python new.py --questions --state intake.json --answers answers.json
 
 `answers.json` 必须恰好覆盖当前轮字段。不用 `--answers` 越序伪造确认。`--known` 用于预填或用户提出的需求修改；变更需求后验收、T3/AI 相应确认和批准摘要失效。`acceptance_notes` 允许记录用户修改意见，下一轮重新确认。
 
-可用字段：purpose、style、custom_adjectives、custom_reference、art_quality、tier、t3_confirmed、content_source、asset_mode、ai_scope、ai_authorized、acceptance_notes、acceptance_confirmed，以及仅预填的 academic_use（真布尔值，从用途上下文判断，不额外重复问）。purpose 可预填论文答辩/课程汇报/学术展示，自动映射为其他并标记学术用途；任何预设均可搭配学术用途。选择值以 `--questions` 输出为准。
+可用字段：purpose、style、palette_mode、palette_selection、color_bg、color_text、color_accent、custom_adjectives、custom_reference、art_quality、tier、t3_confirmed、content_source、asset_mode、ai_scope、ai_authorized、acceptance_notes、acceptance_confirmed，以及仅预填的 academic_use（真布尔值，从用途上下文判断，不额外重复问）。purpose 可预填论文答辩/课程汇报/学术展示，自动映射为其他并标记学术用途；任何预设均可搭配学术用途。选择值以 `--questions` 输出为准。
 
 向导结束仅保存 intake；不会自动搜索、生图、生成项目、批准视觉方案或发布。
 
@@ -42,6 +43,7 @@ python new.py --questions --state intake.json --answers answers.json
 
 ```json
 {
+  "palette": {"--bg":"#f8f7f3","--surface":"#ffffff","--accent":"#203f67","--text":"#202933","--muted":"#607080"},
   "directions": [
     {
       "id": "a",
@@ -128,3 +130,18 @@ python new.py --state intake.json --plan visual-plan.json --build --output-root 
 ```
 
 chapters 必须覆盖每屏，关系清单覆盖已识别的因果/对比/递进/总分/并列关系。制作时这些内容实际显示于页面，不只存于方案；脚本检查清单存在和覆盖记录，图示语义及关系遗漏仍需人工核对。真人复述属于项目验收，脚本不会自动执行或虚构反馈。
+
+
+## 配色询问与记录
+
+风格不是颜色确认。用户只选了国风/学术等风格时，还应由脚本询问 `palette_mode`：
+
+- 沿用风格预设：直接使用该预设的背景/表面/强调/正文/辅助五个变量，不重复问色值。
+- 从推荐配色中选择：下一轮给三个可点击选项（预设原色/柔和强调/浓郁强调），按所选风格原色生成，保持风格配色基调。按钮标签含背景/正文/强调色，本地向导另显示色块。提交完整按钮文字或稳定名称均可，`palette_selection` 保存稳定名称。
+- 我指定颜色：按背景 `color_bg`、正文 `color_text`、强调 `color_accent` 收集，一轮最多三问；本地向导有取色器，原生聊天允许填写颜色名或 #RGB/#RRGGBB。指定一个角色即自动识别该方式，只问未给的角色；修改既有完整配色的一个角色时，其余已确定角色保留。
+
+中文名称支持白色/纸白/暖白/宣纸色/米白/黑色/墨黑/深蓝/藏青/青色/朱砂/红色/金色/香槟金/浅灰/深灰/绿色/蓝色。无法识别的描述由 Codex 转成明确候选色供用户选，不把未经确认的推测色值写入答案。颜色表达式和 CSS 注入拒绝；正文/背景对比度低于4.5:1须调整，不擅自修改用户指定色。
+
+`questions` 的 `swatches`、`color_input`、`initial_color` 仅供本地向导；调用原生工具使用 `tool_questions`（只含title/options），不传附加字段。取色器初始色不是用户选择，不会自动填入必答文本。
+
+需求完整后，`--questions` 输出中的 `palette`（内部由 `new.resolve_palette(answers)` 解析）包含实际五个CSS变量，将结果记录为 visual-plan.json 的 `palette` 并展示给用户。校验必须与选择一致，Build 将颜色覆盖内联到项目CSS，既有预设文件不变。AI最终素材提示词也采用批准色值。颜色、需求或方案修改后旧批准摘要失效，不自动复用同意。

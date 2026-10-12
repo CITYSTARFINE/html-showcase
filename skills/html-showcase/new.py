@@ -18,6 +18,7 @@ PURPOSES = {'1': ('课堂展示', 'ketangzhanshi'), '2': ('产品介绍', 'chanp
 CHOICES = {
     'purpose': ['课堂展示', '产品介绍', '其他'],
     'style': [name for name, _ in STYLES] + ['自定义'],
+    'palette_mode': ['沿用风格预设', '从推荐配色中选择', '我指定颜色'],
     'art_quality': ['精细清晰', '编辑级视觉', '最高美术完成度'],
     'tier': ['T1', 'T2', 'T3', '随便'],
     't3_confirmed': ['确认 T3', '重新选择等级'],
@@ -29,6 +30,11 @@ CHOICES = {
 }
 TITLES = {
     'purpose': '展示用途是什么？', 'style': '选择配色、字体与质感预设（不改变等级）。',
+    'palette_mode': '页面颜色怎么选？风格与配色可分别选择，技术等级不变。',
+    'palette_selection': '选择一套配色；背景、正文、强调色会用于方案和页面。',
+    'color_bg': '背景色想用什么？可填颜色名或色值，例如宣纸色、白色、#f3eddf。',
+    'color_text': '正文色想用什么？可填颜色名或色值，例如墨黑、藏青、#242521。',
+    'color_accent': '强调色想用什么？可填颜色名或色值，例如朱砂、青色、#b53629。',
     'art_quality': '选择美术完成度（不会自动升级技术等级）。',
     'custom_adjectives': '自定义风格：填写三个形容词，用逗号分隔。',
     'custom_reference': '自定义风格：填写一个真实参考名称或链接，待核验。',
@@ -43,6 +49,84 @@ TITLES = {
 }
 BOOL_FIELDS = {'t3_confirmed', 'ai_authorized', 'acceptance_confirmed'}
 ALLOWED = set(TITLES) | {'academic_use'}
+
+
+
+# 中文名称仅作输入便利；生成的 CSS 一律使用经过校验的十六进制值。
+COLOR_NAMES = {'白色':'#ffffff','白':'#ffffff','纸白':'#f8f7f3','暖白':'#faf9f6',
+               '宣纸色':'#f3eddf','米白':'#f3eddf','黑色':'#111214','黑':'#111214',
+               '墨黑':'#242521','深蓝':'#071629','藏青':'#203f67','青色':'#46d9ef',
+               '朱砂':'#b53629','红色':'#b53629','金色':'#d8bd89','香槟金':'#d8bd89',
+               '浅灰':'#eeeeee','深灰':'#333333','绿色':'#246b4a','蓝色':'#245aa5'}
+COLOR_FIELDS = {'color_bg':'--bg','color_text':'--text','color_accent':'--accent'}
+PALETTE_NAMES = ('预设原色', '柔和强调', '浓郁强调')
+
+
+def normalize_color(value):
+    value = COLOR_NAMES.get(value.strip(), value.strip()).lower()
+    if re.fullmatch(r'#[0-9a-f]{3}', value):
+        value = '#' + ''.join(c * 2 for c in value[1:])
+    if not re.fullmatch(r'#[0-9a-f]{6}', value):
+        raise ValueError('请使用支持的中文颜色名或 #RGB/#RRGGBB 色值；不接受 CSS 表达式')
+    return value
+
+
+def blend(first, second, ratio):
+    a, b = normalize_color(first), normalize_color(second)
+    return '#' + ''.join(f'{round(int(a[i:i+2],16)*(1-ratio)+int(b[i:i+2],16)*ratio):02x}' for i in (1,3,5))
+
+
+def luminance(color):
+    values = [int(normalize_color(color)[i:i+2],16)/255 for i in (1,3,5)]
+    linear = [v/12.92 if v<=.04045 else ((v+.055)/1.055)**2.4 for v in values]
+    return sum(v*w for v,w in zip(linear,(.2126,.7152,.0722)))
+
+
+def contrast(first, second):
+    a, b = sorted((luminance(first),luminance(second)))
+    return (b+.05)/(a+.05)
+
+
+def preset_palette(answers):
+    code = dict(STYLES).get(answers.get('style'), 'minimal')
+    css = (ROOT/'styles'/'presets.css').read_text(encoding='utf-8')
+    match = re.search(r'\[data-style="' + re.escape(code) + r'"\]\{([^}]+)\}', css)
+    if not match:
+        raise ValueError('找不到风格配色变量')
+    values = dict(re.findall(r'(--[a-z-]+):([^;]+)',match[1]))
+    return {key:normalize_color(values[key]) for key in ('--bg','--surface','--accent','--text','--muted')}
+
+
+def recommended_palettes(answers):
+    original = preset_palette(answers)
+    soft = dict(original, **{'--accent':blend(original['--accent'], original['--bg'], .16)})
+    strong = dict(original, **{'--accent':blend(original['--accent'], '#000000' if luminance(original['--bg'])>.5 else '#ffffff', .18)})
+    return dict(zip(PALETTE_NAMES,(original,soft,strong)))
+
+
+def palette_label(name, palette):
+    return f"{name}｜背景 {palette['--bg']} · 正文 {palette['--text']} · 强调 {palette['--accent']}"
+
+
+def resolve_palette(answers):
+    palette = preset_palette(answers)
+    mode = answers.get('palette_mode')
+    if mode == '从推荐配色中选择':
+        selection = answers.get('palette_selection')
+        if selection not in PALETTE_NAMES:
+            raise ValueError('尚未选定推荐配色')
+        return recommended_palettes(answers)[selection]
+    if mode == '我指定颜色':
+        if any(k not in answers for k in COLOR_FIELDS):
+            raise ValueError('指定配色需要背景色、正文色、强调色')
+        for field, variable in COLOR_FIELDS.items():
+            palette[variable] = normalize_color(answers[field])
+        if contrast(palette['--bg'],palette['--text']) < 4.5:
+            raise ValueError('正文与背景的对比度低于 4.5:1，请调整正文色或背景色')
+        palette['--surface'] = palette['--bg']
+        muted = blend(palette['--text'],palette['--bg'],.22)
+        palette['--muted'] = muted if contrast(muted,palette['--bg'])>=4.5 else palette['--text']
+    return palette
 
 
 def digest(value):
@@ -62,6 +146,13 @@ def question(key, answers):
     result = {'id': key, 'title': title}
     if key in CHOICES:
         result['options'] = CHOICES[key]
+    if key == 'palette_selection':
+        palettes = recommended_palettes(answers)
+        result['options'] = [palette_label(name,palette) for name,palette in palettes.items()]
+        result['swatches'] = [{'option':palette_label(name,palette),'colors':[palette[k] for k in ('--bg','--text','--accent')]} for name,palette in palettes.items()]
+    if key in COLOR_FIELDS:
+        result['color_input'] = True
+        result['initial_color'] = preset_palette(answers)[COLOR_FIELDS[key]]
     return result
 
 
@@ -86,7 +177,13 @@ def pending(answers):
     elif 'style' not in answers:
         keys = ['style']
     elif answers['style'] == '自定义' and any(k not in answers for k in ('custom_adjectives', 'custom_reference')):
-        keys = [k for k in ('custom_adjectives', 'custom_reference', 'art_quality') if k not in answers]
+        keys = [k for k in ('custom_adjectives', 'custom_reference') if k not in answers]
+    elif 'palette_mode' not in answers:
+        keys = ['palette_mode']
+    elif answers['palette_mode'] == '从推荐配色中选择' and 'palette_selection' not in answers:
+        keys = ['palette_selection']
+    elif answers['palette_mode'] == '我指定颜色' and any(k not in answers for k in COLOR_FIELDS):
+        keys = [k for k in COLOR_FIELDS if k not in answers]
     elif 'art_quality' not in answers:
         keys = ['art_quality']
     elif 'tier' not in answers:
@@ -112,6 +209,18 @@ def update(answers, values):
     """既有明确选择可预填；确认必须是真布尔值或明确的提交文本。"""
     if not isinstance(values, dict) or set(values) - ALLOWED:
         raise ValueError('答案必须是对象，且只包含已定义需求字段')
+    values = dict(values)
+    if any(k in values for k in COLOR_FIELDS) and 'palette_mode' not in values:
+        if answers.get('palette_mode') in CHOICES['palette_mode']:
+            try:
+                prior = resolve_palette(answers)
+                for field, variable in COLOR_FIELDS.items():
+                    values.setdefault(field,prior[variable])
+            except ValueError:
+                pass
+        values['palette_mode'] = '我指定颜色'
+    elif 'palette_selection' in values and 'palette_mode' not in values:
+        values['palette_mode'] = '从推荐配色中选择'
     result = dict(answers)
     for key in [k for k in TITLES if k != 'acceptance_confirmed'] + ['academic_use', 'acceptance_confirmed']:  # 最后记录验收确认。
         if key not in values:
@@ -139,6 +248,13 @@ def update(answers, values):
                 normalized = dict((code, name) for name, code in STYLES).get(normalized, normalized)
                 if normalized == 'custom':
                     normalized = '自定义'
+            if key in COLOR_FIELDS:
+                normalized = normalize_color(normalized)
+            if key == 'palette_selection':
+                aliases = {palette_label(name,palette):name for name,palette in recommended_palettes(result).items()}
+                normalized = aliases.get(normalized,normalized)
+                if normalized not in PALETTE_NAMES:
+                    raise ValueError('请选择列出的推荐配色')
             if key == 'tier':
                 result.pop('_default_notice', None)
                 normalized = normalized.upper()
@@ -156,6 +272,9 @@ def update(answers, values):
             # 已批准的标准不能套用到修改后的需求。
             if key != 'acceptance_confirmed':
                 result.pop('acceptance_confirmed', None)
+            if key == 'palette_mode':
+                for field in ('palette_selection', *COLOR_FIELDS):
+                    result.pop(field, None)
             if key == 'tier':
                 result.pop('t3_confirmed', None)
             if key in ('asset_mode', 'ai_scope'):
@@ -172,6 +291,8 @@ def update(answers, values):
             result['_acceptance_edit'] = True
         if key == 'acceptance_notes':
             result.pop('_acceptance_edit', None)
+    if result.get('palette_mode') == '我指定颜色' and all(k in result for k in COLOR_FIELDS):
+        resolve_palette(result)
     return result
 
 
@@ -213,6 +334,8 @@ def nonempty(value, label):
 def validate_plan(answers, plan, approved=True):
     """校验记录完整性；真实来源仍需 Codex 打开来源人工核验。"""
     answers = require_complete(answers)
+    if plan.get('palette') != resolve_palette(answers):
+        raise ValueError('视觉方案须记录与用户选择一致的具体配色色值；配色变化后重新确认')
     directions = plan.get('directions', [])
     if not isinstance(directions, list) or not 2 <= len(directions) <= 3:
         raise ValueError('先给用户 2–3 个方向，不允许直接提交最终方案')
@@ -311,9 +434,9 @@ def build(answers, plan, output_root=None):
     slug = next(value[1] for value in PURPOSES.values() if value[0] == purpose)
     style = dict(STYLES).get(answers['style'], 'custom')
     custom = (answers['custom_adjectives'], answers['custom_reference']) if style == 'custom' else None
-    return _assemble(purpose, slug, style, answers['tier'], custom, output_root)
+    return _assemble(purpose, slug, style, answers['tier'], custom, output_root, resolve_palette(answers))
 
-def _assemble(purpose, slug, style, tier, custom=None, output_root=None):
+def _assemble(purpose, slug, style, tier, custom=None, output_root=None, palette=None):
     """内部组装函数；仅由经过需求和视觉方案校验的 build 调用。"""
     if tier not in ('T1', 'T2', 'T3') or style not in {key for _, key in STYLES} | {'custom'}:
         raise ValueError('未知等级或风格')
@@ -324,6 +447,9 @@ def _assemble(purpose, slug, style, tier, custom=None, output_root=None):
     if custom:
         brief = html.escape(f'自定义方向：{custom[0]}；参考：{custom[1]}', quote=True).replace('--', '—')
         extra = f'\n<!-- {brief}；下面变量待按参考调整。 -->\n<style>[data-style="custom"]{{--bg:#faf9f6;--surface:#fff;--accent:#e35235;--text:#202328;--muted:#687078;--font-display:Georgia,"Songti SC",serif;--font-body:system-ui,"Microsoft YaHei",sans-serif}}</style>'
+    if palette:
+        declarations = ';'.join(key+':'+normalize_color(value) for key,value in palette.items())
+        extra += '\n<!-- 用户选定的项目配色；不修改七套预设源文件。 -->\n<style>[data-style="'+style+'"]{'+declarations+'}</style>'
     source = source.replace('<link rel="stylesheet" href="../styles/presets.css">', f'<style>\n{presets}\n</style>{extra}')
     for name in ('nav.js', 't3-base.js'):
         marker = f'<script src="../js/{name}"></script>'
@@ -350,7 +476,7 @@ WIZARD = r'''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name=
 const token=__TOKEN__;let round=[];
 function el(tag,text){const n=document.createElement(tag);if(text)n.textContent=text;return n}
 async function render(){const response=await fetch('/api/state');const data=await response.json();round=data.questions;document.body.dataset.stage=round[0]?.id||'complete';document.querySelector('#notice').textContent=data.notice||'';const box=document.querySelector('#questions');box.replaceChildren();document.querySelector('#submit').hidden=!round.length;
-for(const q of round){const field=el('fieldset');field.append(el('legend',q.title));if(q.options){for(const option of q.options){const label=el('label');const input=el('input');input.type='radio';input.name=q.id;input.value=option;input.required=true;label.append(input,document.createTextNode(' '+option));field.append(label)}}else{const input=el('input');input.type='text';input.name=q.id;input.required=true;field.append(input)}box.append(field)}
+for(const q of round){const field=el('fieldset');field.append(el('legend',q.title));if(q.options){for(const option of q.options){const label=el('label');const input=el('input');input.type='radio';input.name=q.id;input.value=option;input.required=true;label.append(input,document.createTextNode(' '+option));const swatch=q.swatches?.find(s=>s.option===option);if(swatch){const colors=el('span');colors.style.cssText='display:flex;gap:7px;margin:8px 0 0 24px';for(const color of swatch.colors){const chip=el('span');chip.style.cssText='display:inline-block;width:30px;height:22px;border:1px solid #aab0b7;border-radius:3px';chip.style.backgroundColor=color;chip.title=color;chip.setAttribute('aria-label',color);colors.append(chip)}label.append(colors)}field.append(label)}}else{const input=el('input');input.type='text';input.name=q.id;input.required=true;field.append(input);if(q.color_input){const picker=el('input');picker.type='color';picker.value=q.initial_color;picker.setAttribute('aria-label','取色器：'+q.title);picker.style.cssText='width:64px;height:38px;margin-top:8px;cursor:pointer';picker.addEventListener('input',()=>{input.value=picker.value});field.append(picker)}}box.append(field)}
 document.querySelector('#status').textContent=round.length?'未提交的选项不算确认。':'需求已保存。尚未生成项目：下一步先选 2–3 个视觉方向之一，再确认完整方案。';}
 document.querySelector('#form').addEventListener('submit',async event=>{event.preventDefault();const answers=Object.fromEntries(new FormData(event.target));document.querySelector('#submit').disabled=true;try{const response=await fetch('/api/answer',{method:'POST',headers:{'Content-Type':'application/json','X-Intake-Token':token},body:JSON.stringify(answers)});const data=await response.json();if(!response.ok)throw Error(data.error);document.querySelector('#error').textContent='';await render()}catch(error){document.querySelector('#error').textContent=error.message}finally{document.querySelector('#submit').disabled=false}});render();</script></html>'''
 
@@ -485,7 +611,7 @@ def main():
                 print(json.dumps(hashes, ensure_ascii=False, indent=2))
         elif args.questions:
             questions = pending(answers)
-            print(json.dumps({'questions': questions, 'tool_questions': [{k: v for k, v in q.items() if k != 'id'} for q in questions], 'complete': not questions, 'notice': answers.get('_default_notice', '')}, ensure_ascii=False, indent=2))
+            print(json.dumps({'questions': questions, 'tool_questions': [{k: v for k, v in q.items() if k in ('title','options')} for q in questions], 'complete': not questions, 'palette': resolve_palette(answers) if not questions else None, 'notice': answers.get('_default_notice', '')}, ensure_ascii=False, indent=2))
         elif args.cli:
             cli(args.state, answers)
         else:

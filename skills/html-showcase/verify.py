@@ -19,7 +19,7 @@ spec.loader.exec_module(new)
 
 
 def complete(tier='T1', style='学术', ai=False):
-    answers = {'purpose': '课堂展示', 'style': style, 'art_quality': '最高美术完成度',
+    answers = {'purpose': '课堂展示', 'style': style, 'palette_mode': '沿用风格预设', 'art_quality': '最高美术完成度',
                'tier': tier, 'content_source': '我搜索整理', 'asset_mode': 'AI 生图' if ai else '程序化'}
     if tier == 'T3':
         answers['t3_confirmed'] = True
@@ -33,6 +33,7 @@ def complete(tier='T1', style='学术', ai=False):
 
 def plan_for(answers):
     plan = {
+        'palette': new.resolve_palette(answers),
         'directions': [{'id': code, 'name': name, 'description': '前景留白、中景正文、背景纸白',
                         'key_frame_differences': '强调图解' if code == 'a' else '强调文本',
                         'suitable_for': '课堂展示', 'references': [], 'reference_status': '暂无对标'}
@@ -61,7 +62,7 @@ def approve(answers, plan):
 class IntakeTests(unittest.TestCase):
     def test_sequence_and_three_question_limit(self):
         answers = {}
-        submitted = {'purpose': '课堂展示', 'style': '学术', 'art_quality': '编辑级视觉', 'tier': 'T1',
+        submitted = {'purpose': '课堂展示', 'style': '学术', 'palette_mode': '沿用风格预设', 'art_quality': '编辑级视觉', 'tier': 'T1',
                      'content_source': '我搜索整理', 'asset_mode': '程序化', 'acceptance_confirmed': '确认验收标准'}
         seen = []
         while new.pending(answers):
@@ -73,7 +74,7 @@ class IntakeTests(unittest.TestCase):
         new.require_complete(answers)
 
     def test_known_choices_are_skipped(self):
-        answers = new.update({}, {'purpose': '课堂展示', 'style': '学术', 'tier': 'T1', 'content_source': '我搜索整理'})
+        answers = new.update({}, {'purpose': '课堂展示', 'style': '学术', 'palette_mode': '沿用风格预设', 'tier': 'T1', 'content_source': '我搜索整理'})
         self.assertEqual([q['id'] for q in new.pending(answers)], ['art_quality'])
 
     def test_defaults_and_other_no_default(self):
@@ -129,6 +130,80 @@ class IntakeTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 new.update({}, {'custom_adjectives': value})
         self.assertFalse(new.pending(complete(style='自定义')))
+
+
+class ColorTests(unittest.TestCase):
+    def test_color_stage_cannot_be_skipped_by_style(self):
+        answers = complete()
+        answers.pop('palette_mode')
+        self.assertEqual(new.pending(answers)[0]['id'], 'palette_mode')
+        with self.assertRaises(ValueError):
+            new.require_complete(answers)
+
+    def test_recommendations_for_all_styles_are_applied(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for style, code in new.STYLES:
+                answers = new.update(complete(style=style), {'palette_mode': '从推荐配色中选择'})
+                q = new.pending(answers)[0]
+                self.assertEqual(q['id'], 'palette_selection')
+                self.assertEqual(len(q['options']), 3)
+                self.assertEqual(len(q['swatches']), 3)
+                # 记录实际提交的完整按钮标签，并归一化为稳定键。
+                answers = new.update(answers, {'palette_selection': q['options'][2], 'acceptance_confirmed': True})
+                self.assertEqual(answers['palette_selection'], '浓郁强调')
+                palette = new.resolve_palette(answers)
+                output = new.build(answers, plan_for(answers), directory)
+                text = (output/'index.html').read_text(encoding='utf-8')
+                declarations = ';'.join(k+':'+v for k,v in palette.items())
+                self.assertIn('[data-style="'+code+'"]{'+declarations+'}',text)
+
+    def test_custom_colors_names_and_three_question_limit(self):
+        answers = new.update(complete(), {'palette_mode':'我指定颜色'})
+        self.assertEqual([q['id'] for q in new.pending(answers)],list(new.COLOR_FIELDS))
+        self.assertEqual(len(new.pending(answers)),3)
+        answers = new.update(answers, {'color_bg':'宣纸色','color_text':'墨黑','color_accent':'朱砂','acceptance_confirmed':True})
+        palette = new.resolve_palette(answers)
+        self.assertEqual(palette['--bg'],'#f3eddf')
+        self.assertEqual(palette['--text'],'#242521')
+        self.assertEqual(palette['--accent'],'#b53629')
+        self.assertGreaterEqual(new.contrast(palette['--bg'],palette['--muted']),4.5)
+
+    def test_known_partial_colors_not_asked_again(self):
+        answers = new.update({}, {'purpose':'课堂展示','style':'学术','color_bg':'#FFF'})
+        self.assertEqual(answers['palette_mode'],'我指定颜色')
+        self.assertEqual(answers['color_bg'],'#ffffff')
+        self.assertEqual([q['id'] for q in new.pending(answers)],['color_text','color_accent'])
+
+    def test_single_color_revision_preserves_other_choices(self):
+        answers = complete()
+        original = new.resolve_palette(answers)
+        changed = new.update(answers, {'color_accent':'朱砂'})
+        self.assertEqual(changed['color_bg'],original['--bg'])
+        self.assertEqual(changed['color_text'],original['--text'])
+        self.assertNotIn('acceptance_confirmed',changed)
+        self.assertEqual(changed['color_accent'],'#b53629')
+
+    def test_reject_css_injection_and_unreadable_pair(self):
+        for color in ('red;}</style><script>alert(1)</script>', '#fff00000', 'url(x)', 'var(--bg)'):
+            with self.assertRaises(ValueError):
+                new.update({}, {'color_bg':color})
+        with self.assertRaises(ValueError):
+            new.update(complete(), {'color_bg':'白色','color_text':'白色','color_accent':'朱砂'})
+
+    def test_plan_requires_selected_palette_and_new_confirmation(self):
+        answers = complete()
+        plan = plan_for(answers)
+        plan.pop('palette')
+        with self.assertRaises(ValueError):
+            new.validate_plan(answers,plan,approved=False)
+        plan = plan_for(answers)
+        plan['palette']['--accent'] = '#123456'
+        with self.assertRaises(ValueError):
+            new.validate_plan(answers,plan,approved=False)
+        original = plan_for(answers)
+        changed = new.update(answers, {'palette_selection':'柔和强调','acceptance_confirmed':True})
+        with self.assertRaises(ValueError):
+            new.validate_plan(changed,original)
 
 
 class PlanTests(unittest.TestCase):
@@ -247,13 +322,24 @@ class InterfaceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             state = Path(directory) / 'intake.json'
             known = Path(directory) / 'known.json'
-            known.write_text(json.dumps({'purpose': '课堂展示', 'style': '学术', 'tier': 'T1'}, ensure_ascii=False), encoding='utf-8')
+            known.write_text(json.dumps({'purpose': '课堂展示', 'style': '学术', 'palette_mode': '沿用风格预设', 'tier': 'T1'}, ensure_ascii=False), encoding='utf-8')
             run = subprocess.run([sys.executable, '-X', 'utf8', str(ROOT / 'new.py'), '--state', str(state), '--known', str(known), '--questions'], capture_output=True, text=True, encoding='utf-8')
             self.assertEqual(run.returncode, 0, run.stderr)
             data = json.loads(run.stdout)
             self.assertEqual(data['questions'][0]['id'], 'art_quality')
             self.assertEqual(data['tool_questions'][0]['options'], new.CHOICES['art_quality'])
             self.assertFalse(list(Path(directory).glob('*/index.html')))
+
+    def test_complete_json_bridge_exposes_palette(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)/'intake.json'
+            answers = complete()
+            new.save(state,answers)
+            run = subprocess.run([sys.executable,'-X','utf8',str(ROOT/'new.py'),'--state',str(state),'--questions'],capture_output=True,text=True,encoding='utf-8')
+            self.assertEqual(run.returncode,0,run.stderr)
+            data = json.loads(run.stdout)
+            self.assertTrue(data['complete'])
+            self.assertEqual(data['palette'],new.resolve_palette(answers))
 
     def test_cli_build_gate_and_complete_plan(self):
         with tempfile.TemporaryDirectory() as directory:
